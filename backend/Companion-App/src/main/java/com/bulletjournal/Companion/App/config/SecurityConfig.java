@@ -57,6 +57,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                "/api/users/auth/**",
+                               "/api/journal/**", // Allow all journal endpoints without authentication
                                 //TODO:: Swagger
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
@@ -70,7 +71,6 @@ public class SecurityConfig {
                                 "/configuration/security"
                         ).permitAll()
                         .requestMatchers("/api/users/**").hasAnyRole("ADMIN", "CUSTOMER")
-                        .requestMatchers("/api/journal/**").hasAnyRole("ADMIN", "CUSTOMER")
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

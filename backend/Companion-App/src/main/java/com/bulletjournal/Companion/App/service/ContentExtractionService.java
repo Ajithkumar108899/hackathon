@@ -52,7 +52,7 @@ public class ContentExtractionService {
 			int lineNumber = i + 1;
 			String positionHash = generatePositionHash(line, lineNumber);
 
-			// Detect and parse based on symbols
+			// Detect and parse based on symbols (priority order: task > event > emotion > note)
 			if (isTask(line)) {
 				Task task = parseTask(line, lineNumber, positionHash, journalPage, user);
 				if (task != null) {
@@ -68,11 +68,19 @@ public class ContentExtractionService {
 				if (emotion != null) {
 					emotions.add(emotion);
 				}
-			} else {
-				// Default to note if no symbol detected
+			} else if (isNote(line)) {
+				// Explicit note pattern (starts with -)
 				Note note = parseNote(line, lineNumber, positionHash, journalPage, user);
 				if (note != null) {
 					notes.add(note);
+				}
+			} else {
+				// Default to note if no symbol detected (but only if line is meaningful)
+				if (line.length() > 3) { // Ignore very short lines
+					Note note = parseNote(line, lineNumber, positionHash, journalPage, user);
+					if (note != null) {
+						notes.add(note);
+					}
 				}
 			}
 		}
@@ -89,70 +97,65 @@ public class ContentExtractionService {
 		return new ExtractionResult(tasksSaved, eventsSaved, notesSaved, emotionsSaved);
 	}
 
+	// Improved patterns for detecting bullet journal symbols (with MULTILINE support)
+	private static final Pattern TASK_PATTERN = Pattern.compile("^[\\s]*([•·\\-]|X|/)[\\s]*(.+)$", Pattern.MULTILINE);
+	private static final Pattern EVENT_PATTERN = Pattern.compile("^[\\s]*(○|O|◉|●|⦿)[\\s]*(.+)$", Pattern.MULTILINE);
+	private static final Pattern NOTE_PATTERN = Pattern.compile("^[\\s]*[-–—][\\s]*(.+)$", Pattern.MULTILINE);
+	private static final Pattern EMOTION_PATTERN = Pattern.compile("(?:feeling|felt|emotion|mood|happy|sad|anxious|excited|worried|calm|stressed|grateful|angry|frustrated|joyful|peaceful|overwhelmed)[\\s]*:?[\\s]*(.+?)(?:\\.|$)", Pattern.CASE_INSENSITIVE);
+
 	/**
-	 * Check if line is a task (contains •, X, or /)
+	 * Check if line is a task (contains •, X, /, or -)
 	 */
 	private boolean isTask(String line) {
-		// Pattern: • (dot), X (completed), / (in progress)
-		Pattern taskPattern = Pattern.compile("^[•·Xx/]\\s+.*", Pattern.CASE_INSENSITIVE);
-		return taskPattern.matcher(line).find();
+		return TASK_PATTERN.matcher(line).find();
 	}
 
 	/**
-	 * Check if line is an event (contains O or ⦿)
+	 * Check if line is an event (contains O, ○, ◉, ●, or ⦿)
 	 */
 	private boolean isEvent(String line) {
-		// Pattern: O (open circle), ⦿ (filled circle), or "O " at start
-		Pattern eventPattern = Pattern.compile("^[O⦿○◯]\\s+.*", Pattern.CASE_INSENSITIVE);
-		return eventPattern.matcher(line).find();
+		return EVENT_PATTERN.matcher(line).find();
 	}
 
 	/**
-	 * Check if line is an emotion (contains emotion keywords or emoji)
+	 * Check if line is a note (contains -)
+	 */
+	private boolean isNote(String line) {
+		return NOTE_PATTERN.matcher(line).find();
+	}
+
+	/**
+	 * Check if line is an emotion (contains emotion keywords)
 	 */
 	private boolean isEmotion(String line) {
-		// Common emotion keywords
-		String[] emotionKeywords = {
-			"happy", "sad", "anxious", "grateful", "excited", "worried",
-			"calm", "stressed", "joyful", "frustrated", "peaceful", "angry",
-			"😊", "😢", "😰", "🙏", "😃", "😟", "😌", "😤", "😡"
-		};
-		
-		String lowerLine = line.toLowerCase();
-		for (String keyword : emotionKeywords) {
-			if (lowerLine.contains(keyword.toLowerCase())) {
-				return true;
-			}
-		}
-		return false;
+		return EMOTION_PATTERN.matcher(line).find();
 	}
 
 	/**
-	 * Parse task from line
+	 * Parse task from line using improved pattern matching
 	 */
 	private Task parseTask(String line, int lineNumber, String positionHash, JournalPage journalPage, User user) {
-		// Extract symbol and content
-		String symbol = "";
-		String content = line;
-		Task.TaskStatus status = Task.TaskStatus.TODO;
-
-		// Detect symbol and status
-		if (line.matches("^[Xx]\\s+.*")) {
-			symbol = "X";
-			status = Task.TaskStatus.COMPLETED;
-			content = line.substring(1).trim();
-		} else if (line.matches("^[/]\\s+.*")) {
-			symbol = "/";
-			status = Task.TaskStatus.IN_PROGRESS;
-			content = line.substring(1).trim();
-		} else if (line.matches("^[•·]\\s+.*")) {
-			symbol = "•";
-			status = Task.TaskStatus.TODO;
-			content = line.substring(1).trim();
+		Matcher taskMatcher = TASK_PATTERN.matcher(line);
+		if (!taskMatcher.find()) {
+			return null;
 		}
 
+		String symbol = taskMatcher.group(1);
+		String content = taskMatcher.group(2).trim();
+		
 		if (content.isEmpty()) {
 			return null;
+		}
+
+		Task.TaskStatus status;
+		// Determine status based on symbol
+		if (symbol.equals("X") || symbol.equals("x")) {
+			status = Task.TaskStatus.COMPLETED;
+		} else if (symbol.equals("/")) {
+			status = Task.TaskStatus.IN_PROGRESS;
+		} else {
+			// •, ·, or - (dash) = TODO
+			status = Task.TaskStatus.TODO;
 		}
 
 		return Task.builder()
@@ -167,30 +170,31 @@ public class ContentExtractionService {
 	}
 
 	/**
-	 * Parse event from line
+	 * Parse event from line using improved pattern matching
 	 */
 	private Event parseEvent(String line, int lineNumber, String positionHash, JournalPage journalPage, User user) {
-		String symbol = "";
-		String content = line;
-		Event.EventStatus status = Event.EventStatus.SCHEDULED;
-
-		// Detect symbol and status
-		if (line.matches("^[⦿●]\\s+.*")) {
-			symbol = "⦿";
-			status = Event.EventStatus.COMPLETED;
-			content = line.substring(1).trim();
-		} else if (line.matches("^[O○◯]\\s+.*")) {
-			symbol = "O";
-			status = Event.EventStatus.SCHEDULED;
-			content = line.substring(1).trim();
+		Matcher eventMatcher = EVENT_PATTERN.matcher(line);
+		if (!eventMatcher.find()) {
+			return null;
 		}
 
+		String symbol = eventMatcher.group(1);
+		String content = eventMatcher.group(2).trim();
+		
 		if (content.isEmpty()) {
 			return null;
 		}
 
-		// Try to extract date from content (simple pattern matching)
-		// This is a basic implementation - can be enhanced
+		Event.EventStatus status;
+		// Determine status based on symbol
+		if (symbol.equals("◉") || symbol.equals("●") || symbol.equals("⦿")) {
+			status = Event.EventStatus.COMPLETED;
+		} else {
+			// O, ○ = SCHEDULED
+			status = Event.EventStatus.SCHEDULED;
+		}
+
+		// Try to extract date from content
 		java.time.LocalDate eventDate = extractDateFromContent(content);
 
 		return Event.builder()
@@ -206,37 +210,55 @@ public class ContentExtractionService {
 	}
 
 	/**
-	 * Parse note from line
+	 * Parse note from line (with improved pattern matching for explicit notes)
 	 */
 	private Note parseNote(String line, int lineNumber, String positionHash, JournalPage journalPage, User user) {
 		if (line.isEmpty()) {
 			return null;
 		}
 
+		String content = line;
+		// If line matches note pattern (starts with -), extract content
+		Matcher noteMatcher = NOTE_PATTERN.matcher(line);
+		if (noteMatcher.find()) {
+			content = noteMatcher.group(1).trim();
+		}
+
+		if (content.isEmpty()) {
+			return null;
+		}
+
 		return Note.builder()
 				.user(user)
 				.journalPage(journalPage)
-				.content(line)
+				.content(content)
 				.lineNumber(lineNumber)
 				.positionHash(positionHash)
 				.build();
 	}
 
 	/**
-	 * Parse emotion from line
+	 * Parse emotion from line using improved pattern matching
 	 */
 	private Emotion parseEmotion(String line, int lineNumber, String positionHash, JournalPage journalPage, User user) {
 		if (line.isEmpty()) {
 			return null;
 		}
 
-		// Extract emotion type (simple keyword matching)
+		String content = line;
+		// Try to extract emotion content from pattern
+		Matcher emotionMatcher = EMOTION_PATTERN.matcher(line);
+		if (emotionMatcher.find()) {
+			content = emotionMatcher.group(1).trim();
+		}
+
+		// Extract emotion type (improved keyword matching)
 		String emotionType = extractEmotionType(line);
 
 		return Emotion.builder()
 				.user(user)
 				.journalPage(journalPage)
-				.content(line)
+				.content(content)
 				.emotionType(emotionType)
 				.lineNumber(lineNumber)
 				.positionHash(positionHash)

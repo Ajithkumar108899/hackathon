@@ -6,13 +6,13 @@ import com.bulletjournal.Companion.App.model.JournalPage;
 import com.bulletjournal.Companion.App.model.User;
 import com.bulletjournal.Companion.App.repository.JournalPageRepository;
 import com.bulletjournal.Companion.App.repository.UserRepository;
+import com.bulletjournal.Companion.App.roles.Role;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.sourceforge.tess4j.TesseractException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
@@ -28,75 +28,133 @@ public class JournalPageService {
 	private final FileStorageService fileStorageService;
 	private final OcrService ocrService;
 	private final ContentExtractionService contentExtractionService;
+	private final PasswordEncoder passwordEncoder;
 
 	@Transactional
-	public ScanResponse scanAndSavePage(Long userId, ScanRequest request) throws IOException {
-		// Get user
+	public List<ScanResponse> scanAndSavePage(Long userId, ScanRequest request) throws IOException {
+		// Get or create guest user for unauthenticated scans
 		User user = userRepository.findById(userId)
-				.orElseThrow(() -> new RuntimeException("User not found"));
+				.orElseGet(() -> {
+					// Try to find existing guest user by email, or create new one
+					String guestEmail = "guest@bulletjournal.local";
+					User guestUser = userRepository.findByEmail(guestEmail)
+							.orElseGet(() -> {
+								log.info("Creating new guest user");
+								User newGuest = User.builder()
+										.email(guestEmail)
+										.password(passwordEncoder.encode("guest123")) // Encrypted password
+										.firstName("Guest")
+										.lastName("User")
+										.role(Role.CUSTOMER)
+										.enabled(true)
+										.build();
+								return userRepository.save(newGuest);
+							});
+					log.info("Using guest user with ID: {}", guestUser.getId());
+					return guestUser;
+				});
 
-		// Store image file
-		String imagePath = fileStorageService.storeFile(request.getImage(), userId);
-		
-		// Perform OCR extraction
-		String extractedText = "";
-		try {
-			File imageFile = fileStorageService.getFilePath(imagePath).toFile();
-			extractedText = ocrService.extractText(imageFile);
-			log.info("OCR extraction completed. Extracted {} characters", extractedText.length());
-		} catch (TesseractException | IOException e) {
-			log.error("OCR extraction failed: {}", e.getMessage(), e);
-			// Continue without OCR text - page will be saved but without extracted text
-			extractedText = "OCR extraction failed: " + e.getMessage();
+		// Validate images list
+		if (request.getImage() == null || request.getImage().isEmpty()) {
+			throw new IllegalArgumentException("At least one image file is required");
 		}
 
-		// Create JournalPage entity
-		JournalPage journalPage = JournalPage.builder()
-				.user(user)
-				.imagePath(imagePath)
-				.originalFilename(request.getImage().getOriginalFilename())
-				.extractedText(extractedText)
-				.pageNumber(request.getPageNumber() != null ? request.getPageNumber() : 1)
-				.threadId(request.getThreadId())
-				.build();
-
-		// Save to database
-		journalPage = journalPageRepository.save(journalPage);
-		log.info("Journal page saved: ID={}, User={}, Page={}, TextLength={}", 
-				journalPage.getId(), userId, journalPage.getPageNumber(), extractedText.length());
-
-		// Extract and save content (tasks, events, notes, emotions)
-		ContentExtractionService.ExtractionResult extractionResult = null;
-		if (!extractedText.isEmpty() && !extractedText.startsWith("OCR extraction failed")) {
+		// Process each image in the list
+		List<ScanResponse> responses = new java.util.ArrayList<>();
+		int basePageNumber = request.getPageNumber() != null ? request.getPageNumber() : 1;
+		
+		for (int i = 0; i < request.getImage().size(); i++) {
+			org.springframework.web.multipart.MultipartFile imageFile = request.getImage().get(i);
+			
 			try {
-				extractionResult = contentExtractionService.extractAndSaveContent(extractedText, journalPage, user);
-				log.info("Content extraction completed: {} tasks, {} events, {} notes, {} emotions",
-						extractionResult.getTasksCount(), extractionResult.getEventsCount(),
-						extractionResult.getNotesCount(), extractionResult.getEmotionsCount());
+				// Store image file
+				String imagePath = fileStorageService.storeFile(imageFile, user.getId());
+				
+				// Perform OCR extraction
+				String extractedText = "";
+				try {
+					File file = fileStorageService.getFilePath(imagePath).toFile();
+					extractedText = ocrService.extractText(file);
+					if (extractedText != null && !extractedText.trim().isEmpty()) {
+						log.info("OCR extraction completed for image {}: {} characters", i + 1, extractedText.length());
+					} else {
+						log.warn("OCR extraction returned empty text for image {}. Tesseract may not be properly configured.", i + 1);
+						extractedText = "";
+					}
+				} catch (TesseractException | IOException | Error e) {
+					log.error("OCR extraction failed for image {}: {}", i + 1, e.getMessage(), e);
+					extractedText = "";
+					log.warn("Continuing without OCR for image {}. Image saved but no text extracted.", i + 1);
+				}
+
+				// Calculate page number (increment for each image)
+				int pageNumber = basePageNumber + i;
+
+				// Create JournalPage entity
+				JournalPage journalPage = JournalPage.builder()
+						.user(user)
+						.imagePath(imagePath)
+						.originalFilename(imageFile.getOriginalFilename())
+						.extractedText(extractedText)
+						.pageNumber(pageNumber)
+						.threadId(request.getThreadId())
+						.build();
+
+				// Save to database
+				journalPage = journalPageRepository.save(journalPage);
+				log.info("Journal page saved: ID={}, User={}, Page={}, TextLength={}", 
+						journalPage.getId(), user.getId(), journalPage.getPageNumber(), extractedText.length());
+
+				// Extract and save content (tasks, events, notes, emotions)
+				ContentExtractionService.ExtractionResult extractionResult = null;
+				if (!extractedText.isEmpty() && !extractedText.startsWith("OCR extraction failed")) {
+					try {
+						extractionResult = contentExtractionService.extractAndSaveContent(extractedText, journalPage, user);
+						log.info("Content extraction completed for page {}: {} tasks, {} events, {} notes, {} emotions",
+								journalPage.getPageNumber(),
+								extractionResult.getTasksCount(), extractionResult.getEventsCount(),
+								extractionResult.getNotesCount(), extractionResult.getEmotionsCount());
+					} catch (Exception e) {
+						log.error("Content extraction failed for page {}: {}", journalPage.getPageNumber(), e.getMessage(), e);
+					}
+				}
+
+				// Build response message
+				String message = "Page scanned and saved successfully.";
+				if (extractedText != null && !extractedText.isEmpty()) {
+					message += " OCR extracted " + extractedText.length() + " characters";
+					if (extractionResult != null) {
+						message += String.format(". Extracted: %d tasks, %d events, %d notes, %d emotions",
+								extractionResult.getTasksCount(), extractionResult.getEventsCount(),
+								extractionResult.getNotesCount(), extractionResult.getEmotionsCount());
+					}
+				} else {
+					message += " Note: OCR is not available. Please install Tesseract OCR for text extraction.";
+				}
+
+				// Build response for this image
+				ScanResponse response = ScanResponse.builder()
+						.journalPageId(journalPage.getId())
+						.imagePath(journalPage.getImagePath())
+						.originalFilename(journalPage.getOriginalFilename())
+						.pageNumber(journalPage.getPageNumber())
+						.threadId(journalPage.getThreadId())
+						.scannedAt(journalPage.getScannedAt())
+						.extractedText(extractedText)
+						.message(message)
+						.build();
+				
+				responses.add(response);
 			} catch (Exception e) {
-				log.error("Content extraction failed: {}", e.getMessage(), e);
+				log.error("Error processing image {}: {}", i + 1, e.getMessage(), e);
+				// Add error response for this image
+				responses.add(ScanResponse.builder()
+						.message("Error processing image " + (i + 1) + ": " + e.getMessage())
+						.build());
 			}
 		}
 
-		// Build response message
-		String message = "Page scanned and saved successfully. OCR extracted " + extractedText.length() + " characters";
-		if (extractionResult != null) {
-			message += String.format(". Extracted: %d tasks, %d events, %d notes, %d emotions",
-					extractionResult.getTasksCount(), extractionResult.getEventsCount(),
-					extractionResult.getNotesCount(), extractionResult.getEmotionsCount());
-		}
-
-		// Build response
-		return ScanResponse.builder()
-				.journalPageId(journalPage.getId())
-				.imagePath(journalPage.getImagePath())
-				.originalFilename(journalPage.getOriginalFilename())
-				.pageNumber(journalPage.getPageNumber())
-				.threadId(journalPage.getThreadId())
-				.scannedAt(journalPage.getScannedAt())
-				.extractedText(extractedText)
-				.message(message)
-				.build();
+		return responses;
 	}
 
 	public List<ScanResponse> getUserPages(Long userId) {
