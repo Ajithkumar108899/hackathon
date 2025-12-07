@@ -30,6 +30,11 @@ public class Note {
 	@Column(nullable = false, columnDefinition = "TEXT")
 	private String content; // Note content
 
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false)
+	@Builder.Default
+	private NoteStatus status = NoteStatus.SCHEDULED; // Note completion status
+
 	@Column(name = "line_number")
 	private Integer lineNumber; // Line number on the page
 
@@ -51,6 +56,11 @@ public class Note {
 	@PreUpdate
 	protected void onUpdate() {
 		updatedAt = LocalDateTime.now();
+	}
+
+	public enum NoteStatus {
+		SCHEDULED,  // O (open circle) - scheduled event
+		COMPLETED   // ⦿ (filled circle) - completed event
 	}
 }
 

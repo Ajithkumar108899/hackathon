@@ -1,7 +1,6 @@
 package com.bulletjournal.Companion.App.dto;
 
 
-import com.bulletjournal.Companion.App.roles.Role;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -19,7 +18,6 @@ public class UserResponse {
 	private String firstName;
 	private String lastName;
 	private String phoneNumber;
-	private Role role;
 	private Boolean enabled;
 	private LocalDateTime createdAt;
 }

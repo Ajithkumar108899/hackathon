@@ -1,16 +1,20 @@
 package com.bulletjournal.Companion.App.controller;
 
 import com.bulletjournal.Companion.App.dto.*;
+import com.bulletjournal.Companion.App.model.User;
+import com.bulletjournal.Companion.App.service.JournalEntryService;
 import com.bulletjournal.Companion.App.service.JournalPageService;
 import com.bulletjournal.Companion.App.service.SearchService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
@@ -20,11 +24,12 @@ import java.util.List;
 @RequestMapping("/api/journal")
 @RequiredArgsConstructor
 @Tag(name = "Journal Management", description = "APIs for scanning and managing journal pages")
-//@SecurityRequirement(name = "Bearer Authentication")
+@SecurityRequirement(name = "Bearer Authentication")
 public class JournalController {
 
 	private final JournalPageService journalPageService;
 	private final SearchService searchService;
+	private final JournalEntryService journalEntryService;
 
 	@PostMapping(value = "/scan", consumes = "multipart/form-data")
 	@Operation(
@@ -34,8 +39,7 @@ public class JournalController {
 				"detect tasks (•, X, /), events (O, ⦿), notes, and emotions. " +
 				"**To upload multiple images:** In Swagger UI, click 'Choose File' and select multiple files " +
 				"by holding Ctrl (Windows) or Cmd (Mac) while clicking. " +
-				"Note: This endpoint does not require authentication.",
-		security = {} // Explicitly disable security for this endpoint
+				"**Requires authentication token in header.**"
 	)
 	@io.swagger.v3.oas.annotations.parameters.RequestBody(
 		description = "Journal page image(s) and metadata. You can select multiple image files at once.",
@@ -46,12 +50,11 @@ public class JournalController {
 		)
 	)
 	public ResponseEntity<List<ScanResponse>> scanPage(
+			@AuthenticationPrincipal User user,
 			@Valid @ModelAttribute ScanRequest request) {
 		try {
-			// Use default user ID (1) or create a guest user for unauthenticated scans
-			// You may want to modify this based on your requirements
-			Long userId = 1L; // Default user ID for unauthenticated scans
-			List<ScanResponse> responses = journalPageService.scanAndSavePage(userId, request);
+			// Get userId from authenticated user (from token)
+			List<ScanResponse> responses = journalPageService.scanAndSavePage(user.getId(), request);
 			return ResponseEntity.status(HttpStatus.CREATED).body(responses);
 		} catch (IOException e) {
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -69,25 +72,23 @@ public class JournalController {
 	@GetMapping("/pages")
 	@Operation(
 		summary = "Get all journal pages", 
-		description = "Retrieve all scanned journal pages. Note: This endpoint does not require authentication.",
-		security = {} // Explicitly disable security for this endpoint
+		description = "Retrieve all scanned journal pages for the authenticated user. **Requires authentication token in header.**"
 	)
-	public ResponseEntity<List<ScanResponse>> getAllPages() {
-		Long userId = 7L; // Default user ID for unauthenticated access
-		List<ScanResponse> pages = journalPageService.getUserPages(userId);
+	public ResponseEntity<List<ScanResponse>> getAllPages(@AuthenticationPrincipal User user) {
+		List<ScanResponse> pages = journalPageService.getUserPages(user.getId());
 		return ResponseEntity.ok(pages);
 	}
 
 	@GetMapping("/pages/{pageId}")
 	@Operation(
 		summary = "Get journal page by ID", 
-		description = "Retrieve a specific journal page by its ID. Note: This endpoint does not require authentication.",
-		security = {} // Explicitly disable security for this endpoint
+		description = "Retrieve a specific journal page by its ID for the authenticated user. **Requires authentication token in header.**"
 	)
-	public ResponseEntity<ScanResponse> getPageById(@PathVariable Long pageId) {
+	public ResponseEntity<ScanResponse> getPageById(
+			@AuthenticationPrincipal User user,
+			@PathVariable Long pageId) {
 		try {
-			Long userId = 1L; // Default user ID for unauthenticated access
-			ScanResponse page = journalPageService.getPageById(pageId, userId);
+			ScanResponse page = journalPageService.getPageById(pageId, user.getId());
 			return ResponseEntity.ok(page);
 		} catch (RuntimeException e) {
 			return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -100,21 +101,179 @@ public class JournalController {
 	@GetMapping("/search")
 	@Operation(
 		summary = "Search journal entries", 
-		description = "Search across tasks, events, notes, and emotions. Note: This endpoint does not require authentication.",
-		security = {} // Explicitly disable security for this endpoint
+		description = "Search across tasks, events, notes, and emotions for the authenticated user. **Requires authentication token in header.**"
 	)
 	public ResponseEntity<SearchResponse> search(
+			@AuthenticationPrincipal User user,
 			@RequestParam(required = false) String query,
 			@RequestParam(required = false) String type,
 			@RequestParam(required = false) String status) {
-		Long userId = 1L; // Default user ID for unauthenticated access
 		SearchRequest request = new SearchRequest();
 		request.setQuery(query);
 		request.setType(type);
 		request.setStatus(status);
 		
-		SearchResponse response = searchService.search(userId, request);
+		SearchResponse response = searchService.search(user.getId(), request);
 		return ResponseEntity.ok(response);
+	}
+
+	// ========== Journal Entries CRUD APIs ==========
+
+	@PostMapping("/entries")
+	@Operation(
+		summary = "Create a new journal entry",
+		description = "Create a new journal entry (task, note, event, or habit) for the authenticated user. **Requires authentication token in header.**"
+	)
+	public ResponseEntity<JournalEntryResponse> createEntry(
+			@AuthenticationPrincipal User user,
+			@Valid @RequestBody JournalEntryRequest request) {
+		try {
+			JournalEntryResponse response = journalEntryService.createEntry(user.getId(), request);
+			return ResponseEntity.status(HttpStatus.CREATED).body(response);
+		} catch (IllegalArgumentException e) {
+			return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+		} catch (RuntimeException e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+		}
+	}
+
+	@GetMapping("/getAllEntries")
+	@Operation(
+		summary = "Get all journal entries",
+		description = "Retrieve all journal entries (tasks, notes, events, habits) for the authenticated user. **Requires authentication token in header.**"
+	)
+	public ResponseEntity<List<JournalEntryResponse>> getAllEntries(@AuthenticationPrincipal User user) {
+		try {
+			List<JournalEntryResponse> entries = journalEntryService.getAllEntries(user.getId());
+			return ResponseEntity.ok(entries);
+		} catch (Exception e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+		}
+	}
+
+	@GetMapping("/entries/{id}")
+	@Operation(
+		summary = "Get journal entry by ID",
+		description = "Retrieve a specific journal entry by its ID for the authenticated user. **Requires authentication token in header.**"
+	)
+	public ResponseEntity<JournalEntryResponse> getEntryById(
+			@AuthenticationPrincipal User user,
+			@PathVariable String id) {
+		try {
+			JournalEntryResponse entry = journalEntryService.getEntryById(user.getId(), id);
+			return ResponseEntity.ok(entry);
+		} catch (RuntimeException e) {
+			return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+		}
+	}
+
+        @PutMapping("/entries/{id}")
+        @Operation(
+            summary = "Update journal entry",
+            description = "Update an existing journal entry for the authenticated user. If the entry type is changed, the entry will be deleted from the old table and created in the new table. **Requires authentication token in header.**"
+        )
+        public ResponseEntity<JournalEntryResponse> updateEntry(
+                @AuthenticationPrincipal User user,
+                @PathVariable String id,
+                @Valid @RequestBody JournalEntryRequest request) {
+            try {
+                JournalEntryResponse response = journalEntryService.updateEntry(user.getId(), id, request);
+                return ResponseEntity.ok(response);
+            } catch (RuntimeException e) {
+                if (e.getMessage().contains("not found")) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+                }
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            } catch (Exception e) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            }
+        }
+        
+        @PutMapping("/updateEntries/{id}")
+        @Operation(
+            summary = "Update journal entry (alternative endpoint)",
+            description = "Update an existing journal entry for the authenticated user. If the entry type is changed, the entry will be deleted from the old table and created in the new table. **Requires authentication token in header.**"
+        )
+        public ResponseEntity<JournalEntryResponse> updateEntryAlternative(
+                @AuthenticationPrincipal User user,
+                @PathVariable String id,
+                @Valid @RequestBody JournalEntryRequest request) {
+            try {
+                JournalEntryResponse response = journalEntryService.updateEntry(user.getId(), id, request);
+                return ResponseEntity.ok(response);
+            } catch (RuntimeException e) {
+                if (e.getMessage().contains("not found")) {
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+                }
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            } catch (Exception e) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            }
+        }
+
+	@DeleteMapping("/entries/{id}")
+	@Operation(
+		summary = "Delete journal entry",
+		description = "Delete a journal entry by its ID for the authenticated user. **Requires authentication token in header.**"
+	)
+	public ResponseEntity<Void> deleteEntry(
+			@AuthenticationPrincipal User user,
+			@PathVariable String id) {
+		try {
+			journalEntryService.deleteEntry(user.getId(), id);
+			return ResponseEntity.ok().build();
+		} catch (RuntimeException e) {
+			if (e.getMessage().contains("not found")) {
+				return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+			}
+			return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		} catch (Exception e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+		}
+	}
+
+	@DeleteMapping("/deleteEntriesById/{id}")
+	@Operation(
+		summary = "Delete journal entry by ID (alternative endpoint)",
+		description = "Delete a journal entry by its ID for the authenticated user. The system will automatically check all tables (tasks, notes, events, emotions) to find and delete the entry. **Requires authentication token in header.**"
+	)
+	public ResponseEntity<Void> deleteEntryById(
+			@AuthenticationPrincipal User user,
+			@PathVariable String id) {
+		try {
+			journalEntryService.deleteEntry(user.getId(), id);
+			return ResponseEntity.ok().build();
+		} catch (RuntimeException e) {
+			if (e.getMessage().contains("not found")) {
+				return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+			}
+			return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		} catch (Exception e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+		}
+	}
+
+	@PatchMapping("/entries/{id}/toggle")
+	@Operation(
+		summary = "Toggle entry completion status",
+		description = "Toggle the completion status of a journal entry (task, note, or event) for the authenticated user. **Requires authentication token in header.**"
+	)
+	public ResponseEntity<JournalEntryResponse> toggleComplete(
+			@AuthenticationPrincipal User user,
+			@PathVariable String id,
+			@RequestBody(required = false) ToggleRequest request) {
+		try {
+			Boolean completed = request != null ? request.getCompleted() : null;
+			JournalEntryResponse response = journalEntryService.toggleComplete(user.getId(), id, completed);
+			return ResponseEntity.ok(response);
+		} catch (RuntimeException e) {
+			if (e.getMessage().contains("not found")) {
+				return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+			}
+			return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		} catch (Exception e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+		}
 	}
 }
 

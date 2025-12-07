@@ -8,7 +8,6 @@ import com.bulletjournal.Companion.App.dto.RegisterRequest;
 import com.bulletjournal.Companion.App.mapper.AuthMapper;
 import com.bulletjournal.Companion.App.model.User;
 import com.bulletjournal.Companion.App.repository.UserRepository;
-import com.bulletjournal.Companion.App.roles.Role;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -28,7 +27,7 @@ public class AuthenticationService {
 	private final AuthMapper authMapper;
 
 	@Transactional
-	public AuthResponse register(RegisterRequest request, Role role) {
+	public AuthResponse register(RegisterRequest request) {
 		// Check if user already exists
 		if (userRepository.existsByEmail(request.getEmail())) {
 			throw new RuntimeException("Email already exists");
@@ -37,7 +36,7 @@ public class AuthenticationService {
 			throw new RuntimeException("Phone number already exists");
 		}
 
-		User user = authMapper.createUser(request, role);
+		User user = authMapper.createUser(request);
 
 		user = userRepository.save(user);
 

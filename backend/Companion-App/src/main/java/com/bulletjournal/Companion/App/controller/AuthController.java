@@ -5,7 +5,6 @@ import com.bulletjournal.Companion.App.dto.AuthRequest;
 import com.bulletjournal.Companion.App.dto.AuthResponse;
 import com.bulletjournal.Companion.App.dto.LogoutResponse;
 import com.bulletjournal.Companion.App.dto.RegisterRequest;
-import com.bulletjournal.Companion.App.roles.Role;
 import com.bulletjournal.Companion.App.service.AuthenticationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,8 +24,8 @@ public class AuthController {
 
 	@PostMapping("/create")
 	@Operation(summary = "Register new user", description = "Create a new user account")
-	public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request, @Valid @RequestParam Role role) {
-		AuthResponse response = authenticationService.register(request, role);
+	public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
+		AuthResponse response = authenticationService.register(request);
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
 	}
 

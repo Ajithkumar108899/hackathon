@@ -5,7 +5,6 @@ import com.bulletjournal.Companion.App.dto.AuthResponse;
 import com.bulletjournal.Companion.App.dto.LogoutResponse;
 import com.bulletjournal.Companion.App.dto.RegisterRequest;
 import com.bulletjournal.Companion.App.model.User;
-import com.bulletjournal.Companion.App.roles.Role;
 import com.bulletjournal.Companion.App.service.JwtService;
 import com.bulletjournal.Companion.App.service.PasswordEncryptionService;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +19,7 @@ public class AuthMapper {
     private final PasswordEncoder passwordEncoder;
     private final PasswordEncryptionService passwordEncryptionService;
 
-    public User createUser(RegisterRequest request, Role role) {
+    public User createUser(RegisterRequest request) {
         String originalPassword = request.getPassword();
         // Store BCrypt hashed password for authentication
         String hashedPassword = passwordEncoder.encode(originalPassword);
@@ -34,9 +33,7 @@ public class AuthMapper {
 				.firstName(request.getFirstName())
 				.lastName(request.getLastName())
 				.phoneNumber(request.getPhoneNumber())
-				.role(role)
 				.enabled(true)
-
 				.build();
     }
 

@@ -1,7 +1,6 @@
 package com.bulletjournal.Companion.App.model;
 
 
-import com.bulletjournal.Companion.App.roles.Role;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.security.core.GrantedAuthority;
@@ -10,6 +9,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
 @Entity
@@ -45,10 +45,6 @@ public class User implements UserDetails {
 	@Column(unique = true)
 	private String phoneNumber;
 
-	@Enumerated(EnumType.STRING)
-	@Column(nullable = false)
-	private Role role;
-
     // Explicit setter for Boolean enabled field
     @Column(nullable = false)
 	@Builder.Default
@@ -82,7 +78,8 @@ public class User implements UserDetails {
 
 	@Override
 	public Collection<? extends GrantedAuthority> getAuthorities() {
-		return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
+		// Return empty authorities - no role-based access control
+		return Collections.emptyList();
 	}
 
 	@Override

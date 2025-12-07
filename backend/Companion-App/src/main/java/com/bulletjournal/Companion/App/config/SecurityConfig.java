@@ -27,7 +27,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity
+//@EnableMethodSecurity // Disabled - no role-based access control
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -37,7 +37,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration corsConfig = new CorsConfiguration();
-        corsConfig.setAllowedOrigins(Arrays.asList("http://localhost:3000", "http://localhost:4200", "http://192.168.0.26", "http://192.168.0.25"));
+        corsConfig.setAllowedOrigins(Arrays.asList("http://localhost:3000", "http://localhost:4200", "http://192.168.0.55", "http://192.168.0.40", "http://10.245.81.195", "http://192.168.0.27","http://10.245.81.220"));
         corsConfig.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         corsConfig.setAllowedHeaders(List.of("*"));
         corsConfig.setAllowCredentials(true);
@@ -56,8 +56,7 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                               "/api/users/auth/**",
-                               "/api/journal/**", // Allow all journal endpoints without authentication
+                               "/api/users/auth/**", // Allow only auth endpoints without token
                                 //TODO:: Swagger
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
@@ -70,8 +69,9 @@ public class SecurityConfig {
                                 "/configuration/ui",
                                 "/configuration/security"
                         ).permitAll()
-                        .requestMatchers("/api/users/**").hasAnyRole("ADMIN", "CUSTOMER")
-                        .anyRequest().authenticated()
+                        .requestMatchers("/api/**").authenticated() // All other APIs require token
+
+                        .anyRequest().authenticated() // All other requests require authentication
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider())

@@ -6,7 +6,6 @@ import com.bulletjournal.Companion.App.model.JournalPage;
 import com.bulletjournal.Companion.App.model.User;
 import com.bulletjournal.Companion.App.repository.JournalPageRepository;
 import com.bulletjournal.Companion.App.repository.UserRepository;
-import com.bulletjournal.Companion.App.roles.Role;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,27 +31,9 @@ public class JournalPageService {
 
 	@Transactional
 	public List<ScanResponse> scanAndSavePage(Long userId, ScanRequest request) throws IOException {
-		// Get or create guest user for unauthenticated scans
+		// Get user from database (userId comes from authenticated token)
 		User user = userRepository.findById(userId)
-				.orElseGet(() -> {
-					// Try to find existing guest user by email, or create new one
-					String guestEmail = "guest@bulletjournal.local";
-					User guestUser = userRepository.findByEmail(guestEmail)
-							.orElseGet(() -> {
-								log.info("Creating new guest user");
-								User newGuest = User.builder()
-										.email(guestEmail)
-										.password(passwordEncoder.encode("guest123")) // Encrypted password
-										.firstName("Guest")
-										.lastName("User")
-										.role(Role.CUSTOMER)
-										.enabled(true)
-										.build();
-								return userRepository.save(newGuest);
-							});
-					log.info("Using guest user with ID: {}", guestUser.getId());
-					return guestUser;
-				});
+				.orElseThrow(() -> new RuntimeException("User not found. Please ensure you are authenticated."));
 
 		// Validate images list
 		if (request.getImage() == null || request.getImage().isEmpty()) {

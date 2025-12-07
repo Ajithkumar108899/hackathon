@@ -39,38 +39,12 @@ public class UserController {
 		return ResponseEntity.ok(response);
 	}
 
-	@GetMapping("/getUserByDeleteFalseId/{id}")
-	@Operation(summary = "Get soft-deleted user by ID", description = "Retrieve soft-deleted user details by user ID (enabled = false). Only returns users that are soft-deleted. Requires SUPER_ADMIN role.")
-	public ResponseEntity<UserResponse> getUserByFalseId(@PathVariable Long id) {
-		UserResponse response = userService.getUserByFalseId(id);
-		return ResponseEntity.ok(response);
-	}
-
 	@GetMapping("/getAllActiveTrueUsers")
 	@Operation(summary = "Get all users", description = "Retrieve all users (Super Admin only)")
 	public ResponseEntity<List<UserResponse>> getAllUsers() {
 		List<UserResponse> users = userService.getAllUsers();
 		return ResponseEntity.ok(users);
 	}
-
-	@GetMapping("/getOnlineUsers")
-	@Operation(
-		summary = "Get all online users", 
-		description = "Retrieve all users who are currently online (active within last 15 minutes). Only active users (enabled = true) are considered. Requires SUPER_ADMIN role."
-	)
-	public ResponseEntity<List<UserResponse>> getOnlineUsers() {
-		List<UserResponse> users = userService.getOnlineUsers();
-		return ResponseEntity.ok(users);
-	}
-
-	@GetMapping("/getAllDeleteFalseUser")
-	@Operation(summary = "Get all soft-deleted users", description = "Retrieve all soft-deleted users (enabled = false). Requires SUPER_ADMIN role.")
-	public ResponseEntity<List<UserResponse>> getAllFalseUser() {
-		List<UserResponse> users = userService.getAllFalseUser();
-		return ResponseEntity.ok(users);
-	}
-
-
 
 
 	@DeleteMapping("/deleteUserById/{id}")
@@ -87,33 +61,6 @@ public class UserController {
 		return ResponseEntity.ok(response);
 	}
 
-	@PutMapping("/enableUserById/{id}")
-	@Operation(
-		summary = "Enable user (Reactivate)", 
-		description = "Enable (reactivate) a soft-deleted user by ID - sets enabled to true in database. User must be soft-deleted (enabled = false) to be enabled. Requires SUPER_ADMIN role."
-	)
-	public ResponseEntity<UserResponse> enableUser(@PathVariable Long id) {
-		UserResponse response = userService.enableUser(id);
-		return ResponseEntity.ok(response);
-	}
-
-	@PostMapping("/getActivePasswordByEmail")
-	@Operation(summary = "Get password by email", description = "Retrieves the hashed password for a user by email. Note: Passwords are BCrypt hashed (one-way) and cannot be decoded."
-	)
-	public ResponseEntity<PasswordResponse> getPasswordByEmail(@RequestBody EmailRequest emailRequest) {
-		PasswordResponse response = userService.getUserEntityByEmail(emailRequest.getEmail());
-		return ResponseEntity.ok(response);
-	}
-
-	@PostMapping("/getDeletePasswordByEmail")
-	@Operation(
-		summary = "Get password by email for soft-deleted user", 
-		description = "Retrieves the hashed password for a soft-deleted user (enabled = false) by email. Note: Passwords are BCrypt hashed (one-way) and cannot be decoded. Requires SUPER_ADMIN role."
-	)
-	public ResponseEntity<PasswordResponse> getDeletePasswordByEmail(@RequestBody EmailRequest emailRequest) {
-		PasswordResponse response = userService.getDeletePasswordByEmail(emailRequest.getEmail());
-		return ResponseEntity.ok(response);
-	}
 
 	@PostMapping("/getOriginalPasswordByEmail")
 	@Operation(summary = "Get original password by email", description = "Retrieves the original (decrypted) password for a user by email. Password is stored in AES encrypted format and can be decrypted. Only available for users created after password encryption was implemented."

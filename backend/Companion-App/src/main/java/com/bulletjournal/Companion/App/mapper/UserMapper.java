@@ -17,7 +17,6 @@ public class UserMapper {
 				.firstName(user.getFirstName())
 				.lastName(user.getLastName())
 				.phoneNumber(user.getPhoneNumber())
-				.role(user.getRole())
 				.enabled(user.getEnabled())
 				.createdAt(user.getCreatedAt())
 				.build();

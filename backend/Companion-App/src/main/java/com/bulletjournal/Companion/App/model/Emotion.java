@@ -39,6 +39,11 @@ public class Emotion {
 	@Column(name = "position_hash")
 	private String positionHash; // Hash of position for duplicate detection
 
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false)
+	@Builder.Default
+	private EmotionStatus status = EmotionStatus.SCHEDULED;
+
 	@Column(nullable = false, updatable = false)
 	private LocalDateTime createdAt;
 
@@ -55,5 +60,11 @@ public class Emotion {
 	protected void onUpdate() {
 		updatedAt = LocalDateTime.now();
 	}
+
+	public enum EmotionStatus {
+		SCHEDULED,  // O (open circle) - scheduled event
+		COMPLETED   // ⦿ (filled circle) - completed event
+	}
+
 }
 

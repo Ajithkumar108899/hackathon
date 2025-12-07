@@ -29,7 +29,7 @@ public class ExportController {
 
 	@GetMapping("/taskpaper")
 	@Operation(summary = "Export tasks as TaskPaper", 
-			   description = "Export all tasks in TaskPaper format (.taskpaper file)")
+			   description = "Export all tasks in TaskPaper format (.taskpaper file) for the authenticated user")
 	public ResponseEntity<String> exportTaskPaper(@AuthenticationPrincipal User user) {
 		try {
 			String taskPaper = exportService.exportToTaskPaper(user.getId());
@@ -50,7 +50,7 @@ public class ExportController {
 
 	@GetMapping("/markdown")
 	@Operation(summary = "Export notes and emotions as Markdown", 
-			   description = "Export all notes and emotions in Markdown format (.md file)")
+			   description = "Export all notes and emotions in Markdown format (.md file) for the authenticated user")
 	public ResponseEntity<String> exportMarkdown(@AuthenticationPrincipal User user) {
 		try {
 			String markdown = exportService.exportToMarkdown(user.getId());
@@ -71,7 +71,7 @@ public class ExportController {
 
 	@GetMapping("/all")
 	@Operation(summary = "Export all content as Markdown", 
-			   description = "Export all tasks, events, notes, and emotions in Markdown format")
+			   description = "Export all tasks, events, notes, and emotions in Markdown format for the authenticated user")
 	public ResponseEntity<String> exportAll(@AuthenticationPrincipal User user) {
 		try {
 			String markdown = exportService.exportAllToMarkdown(user.getId());
