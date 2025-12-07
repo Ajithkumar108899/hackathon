@@ -1,5 +1,6 @@
 package com.bulletjournal.Companion.App.controller;
 
+import com.bulletjournal.Companion.App.dto.ExtractedDataResponse;
 import com.bulletjournal.Companion.App.dto.*;
 import com.bulletjournal.Companion.App.model.User;
 import com.bulletjournal.Companion.App.service.JournalEntryService;
@@ -271,6 +272,25 @@ public class JournalController {
 				return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
 			}
 			return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+		} catch (Exception e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+		}
+	}
+
+	@GetMapping("/extractedData")
+	@Operation(
+		summary = "Get extracted data for Extracted Data View",
+		description = "Retrieve extracted journal entries (tasks, notes, events, emotions) for the authenticated user. " +
+				"If journalPageId is provided, returns only entries from that specific scan. " +
+				"If not provided, returns all entries from scanned images (excludes manual entries). " +
+				"Returns title, type, symbol, status, and created date. **Requires authentication token in header.**"
+	)
+	public ResponseEntity<List<ExtractedDataResponse>> getExtractedData(
+			@AuthenticationPrincipal User user,
+			@RequestParam(required = false) Long journalPageId) {
+		try {
+			List<ExtractedDataResponse> extractedData = journalEntryService.getExtractedData(user.getId(), journalPageId);
+			return ResponseEntity.ok(extractedData);
 		} catch (Exception e) {
 			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
 		}

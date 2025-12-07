@@ -51,15 +51,25 @@ public class JournalPageService {
 				// Store image file
 				String imagePath = fileStorageService.storeFile(imageFile, user.getId());
 				
+				// Check if OCR is available before attempting extraction
+				boolean ocrAvailable = ocrService.isOcrAvailable();
+				if (!ocrAvailable) {
+					log.warn("Tesseract OCR is not available. Skipping OCR extraction for image {}.", i + 1);
+				}
+				
 				// Perform OCR extraction
 				String extractedText = "";
 				try {
-					File file = fileStorageService.getFilePath(imagePath).toFile();
-					extractedText = ocrService.extractText(file);
-					if (extractedText != null && !extractedText.trim().isEmpty()) {
-						log.info("OCR extraction completed for image {}: {} characters", i + 1, extractedText.length());
+					if (ocrAvailable) {
+						File file = fileStorageService.getFilePath(imagePath).toFile();
+						extractedText = ocrService.extractText(file);
+						if (extractedText != null && !extractedText.trim().isEmpty()) {
+							log.info("OCR extraction completed for image {}: {} characters", i + 1, extractedText.length());
+						} else {
+							log.warn("OCR extraction returned empty text for image {}. This may indicate image quality issues or OCR configuration problems.", i + 1);
+							extractedText = "";
+						}
 					} else {
-						log.warn("OCR extraction returned empty text for image {}. Tesseract may not be properly configured.", i + 1);
 						extractedText = "";
 					}
 				} catch (TesseractException | IOException | Error e) {
@@ -110,7 +120,16 @@ public class JournalPageService {
 								extractionResult.getNotesCount(), extractionResult.getEmotionsCount());
 					}
 				} else {
-					message += " Note: OCR is not available. Please install Tesseract OCR for text extraction.";
+					// Reuse the ocrAvailable variable declared earlier
+					if (!ocrAvailable) {
+						message += " Note: Tesseract OCR is not installed. ";
+						message += "Please install Tesseract OCR to enable text extraction. ";
+						message += "Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki or use 'choco install tesseract'. ";
+						message += "Linux: 'sudo apt-get install tesseract-ocr'. ";
+						message += "Mac: 'brew install tesseract'.";
+					} else {
+						message += " Note: OCR extraction returned empty text. This may indicate image quality issues.";
+					}
 				}
 
 				// Build response for this image

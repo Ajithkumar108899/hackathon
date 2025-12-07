@@ -1,5 +1,6 @@
 package com.bulletjournal.Companion.App.service;
 
+import com.bulletjournal.Companion.App.dto.ExtractedDataResponse;
 import com.bulletjournal.Companion.App.dto.JournalEntryRequest;
 import com.bulletjournal.Companion.App.dto.JournalEntryResponse;
 import com.bulletjournal.Companion.App.model.*;
@@ -725,6 +726,305 @@ public class JournalEntryService {
 	private String formatDateTime(LocalDateTime dateTime) {
 		if (dateTime == null) return null;
 		return dateTime.format(DATETIME_FORMATTER);
+	}
+	
+	/**
+	 * Get extracted data from all tables (tasks, notes, events, emotions) for the user
+	 * Returns ONLY data from scanned images (excludes manual entries)
+	 * If journalPageId is provided, returns only entries from that specific scan
+	 * Returns data in format suitable for Extracted Data View page
+	 */
+	@Transactional(readOnly = true)
+	public List<ExtractedDataResponse> getExtractedData(Long userId, Long journalPageId) {
+		List<ExtractedDataResponse> extractedData = new ArrayList<>();
+		
+		// If journalPageId is provided, get entries only from that specific scan
+		if (journalPageId != null) {
+			// Get tasks from specific journal page
+			List<Task> tasks = taskRepository.findByJournalPageId(journalPageId);
+			extractedData.addAll(tasks.stream()
+				.filter(task -> task.getUser().getId().equals(userId)) // Verify user ownership
+				.map(this::taskToExtractedData)
+				.collect(Collectors.toList()));
+			
+			// Get notes from specific journal page
+			List<Note> notes = noteRepository.findByJournalPageId(journalPageId);
+			extractedData.addAll(notes.stream()
+				.filter(note -> note.getUser().getId().equals(userId))
+				.map(this::noteToExtractedData)
+				.collect(Collectors.toList()));
+			
+			// Get events from specific journal page
+			List<Event> events = eventRepository.findByJournalPageId(journalPageId);
+			extractedData.addAll(events.stream()
+				.filter(event -> event.getUser().getId().equals(userId))
+				.map(this::eventToExtractedData)
+				.collect(Collectors.toList()));
+			
+			// Get emotions from specific journal page
+			List<Emotion> emotions = emotionRepository.findByJournalPageId(journalPageId);
+			extractedData.addAll(emotions.stream()
+				.filter(emotion -> emotion.getUser().getId().equals(userId))
+				.map(this::emotionToExtractedData)
+				.collect(Collectors.toList()));
+		} else {
+			// Get all tasks - filter out manual entries
+			List<Task> tasks = taskRepository.findByUserId(userId);
+			extractedData.addAll(tasks.stream()
+				.filter(task -> {
+					try {
+						// Access journalPage to trigger lazy loading
+						JournalPage page = task.getJournalPage();
+						return !isManualEntry(page);
+					} catch (Exception e) {
+						// If lazy loading fails, assume it's not manual (safer to include)
+						return true;
+					}
+				})
+				.map(this::taskToExtractedData)
+				.collect(Collectors.toList()));
+			
+			// Get all notes - filter out manual entries
+			List<Note> notes = noteRepository.findByUserId(userId);
+			extractedData.addAll(notes.stream()
+				.filter(note -> {
+					try {
+						JournalPage page = note.getJournalPage();
+						return !isManualEntry(page);
+					} catch (Exception e) {
+						return true;
+					}
+				})
+				.map(this::noteToExtractedData)
+				.collect(Collectors.toList()));
+			
+			// Get all events - filter out manual entries
+			List<Event> events = eventRepository.findByUserId(userId);
+			extractedData.addAll(events.stream()
+				.filter(event -> {
+					try {
+						JournalPage page = event.getJournalPage();
+						return !isManualEntry(page);
+					} catch (Exception e) {
+						return true;
+					}
+				})
+				.map(this::eventToExtractedData)
+				.collect(Collectors.toList()));
+			
+			// Get all emotions (includes habits) - filter out manual entries
+			List<Emotion> emotions = emotionRepository.findByUserId(userId);
+			extractedData.addAll(emotions.stream()
+				.filter(emotion -> {
+					try {
+						JournalPage page = emotion.getJournalPage();
+						return !isManualEntry(page);
+					} catch (Exception e) {
+						return true;
+					}
+				})
+				.map(this::emotionToExtractedData)
+				.collect(Collectors.toList()));
+		}
+		
+		// Sort by createdAt descending (newest first)
+		extractedData.sort((a, b) -> {
+			try {
+				LocalDateTime dateA = LocalDateTime.parse(a.getCreatedDate(), DATETIME_FORMATTER);
+				LocalDateTime dateB = LocalDateTime.parse(b.getCreatedDate(), DATETIME_FORMATTER);
+				return dateB.compareTo(dateA);
+			} catch (Exception e) {
+				return 0;
+			}
+		});
+		
+		return extractedData;
+	}
+	
+	/**
+	 * Check if a journal page is a manual entry (not from scanned image)
+	 */
+	private boolean isManualEntry(JournalPage journalPage) {
+		if (journalPage == null) {
+			return false; // If no journal page, consider it as scanned (edge case)
+		}
+		
+		// Manual entries have threadId "MANUAL_ENTRY" or originalFilename "Manual Entry"
+		String threadId = journalPage.getThreadId();
+		String originalFilename = journalPage.getOriginalFilename();
+		String imagePath = journalPage.getImagePath();
+		
+		return ("MANUAL_ENTRY".equals(threadId) || 
+				"Manual Entry".equals(originalFilename) ||
+				"manual-entry".equals(imagePath));
+	}
+	
+	private ExtractedDataResponse taskToExtractedData(Task task) {
+		String content = task.getContent();
+		String title = content;
+		
+		// Extract title from content
+		if (content != null && content.contains(" - ")) {
+			String[] parts = content.split(" - ", 2);
+			title = parts[0].trim();
+		} else if (content != null) {
+			title = content.trim();
+		}
+		
+		if (title == null || title.trim().isEmpty() || title.trim().equals("_")) {
+			title = "Untitled Task";
+		}
+		
+		// Determine symbol based on status
+		String symbol = task.getSymbol() != null ? task.getSymbol() : "•";
+		if (task.getStatus() == Task.TaskStatus.COMPLETED) {
+			symbol = "X";
+		} else if (task.getStatus() == Task.TaskStatus.IN_PROGRESS) {
+			symbol = "/";
+		} else {
+			symbol = "•";
+		}
+		
+		return ExtractedDataResponse.builder()
+			.title(title)
+			.type("task")
+			.symbol(symbol)
+			.status(task.getStatus().name())
+			.createdDate(formatDateTime(task.getCreatedAt()))
+			.build();
+	}
+	
+	private ExtractedDataResponse noteToExtractedData(Note note) {
+		String content = note.getContent();
+		String title = content;
+		
+		// Extract title from content
+		if (content != null && content.contains(" - ")) {
+			String[] parts = content.split(" - ", 2);
+			title = parts[0].trim();
+		} else if (content != null) {
+			title = content.trim();
+		}
+		
+		if (title == null || title.trim().isEmpty() || title.trim().equals("_")) {
+			title = "Untitled Note";
+		}
+		
+		// Determine symbol based on status
+		String symbol = "-";
+		if (note.getStatus() == Note.NoteStatus.COMPLETED) {
+			symbol = "⦿";
+		} else {
+			symbol = "-";
+		}
+		
+		return ExtractedDataResponse.builder()
+			.title(title)
+			.type("note")
+			.symbol(symbol)
+			.status(note.getStatus().name())
+			.createdDate(formatDateTime(note.getCreatedAt()))
+			.build();
+	}
+	
+	private ExtractedDataResponse eventToExtractedData(Event event) {
+		String content = event.getContent();
+		String title = content;
+		
+		// Extract title from content
+		if (content != null && content.contains(" - ")) {
+			String[] parts = content.split(" - ", 2);
+			title = parts[0].trim();
+		} else if (content != null) {
+			title = content.trim();
+		}
+		
+		if (title == null || title.trim().isEmpty() || title.trim().equals("_")) {
+			title = "Untitled Event";
+		}
+		
+		// Determine symbol based on status
+		String symbol = event.getSymbol() != null ? event.getSymbol() : "O";
+		if (event.getStatus() == Event.EventStatus.COMPLETED) {
+			symbol = "⦿";
+		} else {
+			symbol = "O";
+		}
+		
+		// Determine status display
+		String statusDisplay = event.getStatus().name();
+		if (event.getEventDate() != null && event.getEventDate().isAfter(LocalDate.now())) {
+			statusDisplay = "Upcoming";
+		} else if (event.getStatus() == Event.EventStatus.COMPLETED) {
+			statusDisplay = "Completed";
+		} else {
+			statusDisplay = "Scheduled";
+		}
+		
+		return ExtractedDataResponse.builder()
+			.title(title)
+			.type("event")
+			.symbol(symbol)
+			.status(statusDisplay)
+			.createdDate(formatDateTime(event.getCreatedAt()))
+			.build();
+	}
+	
+	private ExtractedDataResponse emotionToExtractedData(Emotion emotion) {
+		String content = emotion.getContent();
+		String title = content;
+		
+		// Extract title from content
+		if (content != null && content.contains(" - ")) {
+			String[] parts = content.split(" - ", 2);
+			title = parts[0].trim();
+		} else if (content != null) {
+			title = content.trim();
+		}
+		
+		if (title == null || title.trim().isEmpty() || title.trim().equals("_")) {
+			title = "Untitled Emotion";
+		}
+		
+		// Determine type (habit or emotion)
+		String entryType = "emotion";
+		if (emotion.getEmotionType() != null && emotion.getEmotionType().equals("habit")) {
+			entryType = "habit";
+		}
+		
+		// Determine symbol based on emotion type
+		String symbol = "😊"; // Default emotion symbol
+		if (emotion.getEmotionType() != null) {
+			switch (emotion.getEmotionType().toLowerCase()) {
+				case "happy":
+				case "joy":
+					symbol = "😊";
+					break;
+				case "sad":
+					symbol = "😢";
+					break;
+				case "anxious":
+				case "anxiety":
+					symbol = "😰";
+					break;
+				case "grateful":
+					symbol = "🙏";
+					break;
+				case "habit":
+					symbol = "🔄";
+					break;
+				default:
+					symbol = "😊";
+			}
+		}
+		
+		return ExtractedDataResponse.builder()
+			.title(title)
+			.type(entryType)
+			.symbol(symbol)
+			.status(emotion.getStatus() != null ? emotion.getStatus().name() : "SCHEDULED")
+			.createdDate(formatDateTime(emotion.getCreatedAt()))
+			.build();
 	}
 }
 

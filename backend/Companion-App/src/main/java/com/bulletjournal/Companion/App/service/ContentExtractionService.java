@@ -31,56 +31,79 @@ public class ContentExtractionService {
 	@Transactional
 	public ExtractionResult extractAndSaveContent(String extractedText, JournalPage journalPage, User user) {
 		if (extractedText == null || extractedText.trim().isEmpty() || extractedText.startsWith("OCR extraction failed")) {
-			log.warn("No valid text to extract for journal page: {}", journalPage.getId());
+			log.warn("No valid text to extract for journal page: {}. Extracted text was: '{}'", 
+					journalPage.getId(), extractedText);
 			return new ExtractionResult(0, 0, 0, 0);
 		}
+		
+		// Log the raw extracted text for debugging
+		log.info("Raw extracted text for page {}: '{}'", journalPage.getId(), extractedText);
 
 		List<Task> tasks = new ArrayList<>();
 		List<Event> events = new ArrayList<>();
 		List<Note> notes = new ArrayList<>();
 		List<Emotion> emotions = new ArrayList<>();
 
-		// Split text into lines
-		String[] lines = extractedText.split("\n");
+		log.info("Extracting content from text ({} characters): {}", extractedText.length(), 
+				extractedText.length() > 200 ? extractedText.substring(0, 200) + "..." : extractedText);
+		
+		// Split text into lines (handle both \n and \r\n)
+		String[] lines = extractedText.split("\\r?\\n");
+		
+		log.info("Split into {} lines for processing", lines.length);
 		
 		for (int i = 0; i < lines.length; i++) {
 			String line = lines[i].trim();
-			if (line.isEmpty()) {
-				continue;
+			if (line.isEmpty() || line.length() < 2) {
+				continue; // Skip empty or very short lines
 			}
 
 			int lineNumber = i + 1;
 			String positionHash = generatePositionHash(line, lineNumber);
+			
+			log.debug("Processing line {}: '{}'", lineNumber, line);
 
 			// Detect and parse based on symbols (priority order: task > event > emotion > note)
 			if (isTask(line)) {
+				log.debug("Line {} detected as TASK", lineNumber);
 				Task task = parseTask(line, lineNumber, positionHash, journalPage, user);
 				if (task != null) {
 					tasks.add(task);
+					log.debug("Parsed task: {} (status: {})", task.getContent(), task.getStatus());
 				}
 			} else if (isEvent(line)) {
+				log.debug("Line {} detected as EVENT", lineNumber);
 				Event event = parseEvent(line, lineNumber, positionHash, journalPage, user);
 				if (event != null) {
 					events.add(event);
+					log.debug("Parsed event: {} (status: {})", event.getContent(), event.getStatus());
 				}
 			} else if (isEmotion(line)) {
+				log.debug("Line {} detected as EMOTION", lineNumber);
 				Emotion emotion = parseEmotion(line, lineNumber, positionHash, journalPage, user);
 				if (emotion != null) {
 					emotions.add(emotion);
+					log.debug("Parsed emotion: {} (type: {})", emotion.getContent(), emotion.getEmotionType());
 				}
 			} else if (isNote(line)) {
+				log.debug("Line {} detected as NOTE", lineNumber);
 				// Explicit note pattern (starts with -)
 				Note note = parseNote(line, lineNumber, positionHash, journalPage, user);
 				if (note != null) {
 					notes.add(note);
+					log.debug("Parsed note: {}", note.getContent());
 				}
 			} else {
 				// Default to note if no symbol detected (but only if line is meaningful)
 				if (line.length() > 3) { // Ignore very short lines
+					log.debug("Line {} defaulting to NOTE (no symbol detected)", lineNumber);
 					Note note = parseNote(line, lineNumber, positionHash, journalPage, user);
 					if (note != null) {
 						notes.add(note);
+						log.debug("Parsed note (default): {}", note.getContent());
 					}
+				} else {
+					log.debug("Line {} skipped (too short: '{}')", lineNumber, line);
 				}
 			}
 		}
@@ -98,23 +121,38 @@ public class ContentExtractionService {
 	}
 
 	// Improved patterns for detecting bullet journal symbols (with MULTILINE support)
-	private static final Pattern TASK_PATTERN = Pattern.compile("^[\\s]*([•·\\-]|X|/)[\\s]*(.+)$", Pattern.MULTILINE);
-	private static final Pattern EVENT_PATTERN = Pattern.compile("^[\\s]*(○|O|◉|●|⦿)[\\s]*(.+)$", Pattern.MULTILINE);
+	// Updated to handle various formats and spacing
+	private static final Pattern TASK_PATTERN = Pattern.compile("^[\\s]*([•·\\-]|X|x|/)[\\s]*(.+)$", Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
+	private static final Pattern EVENT_PATTERN = Pattern.compile("^[\\s]*(○|O|o|◉|●|⦿)[\\s]*(.+)$", Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
 	private static final Pattern NOTE_PATTERN = Pattern.compile("^[\\s]*[-–—][\\s]*(.+)$", Pattern.MULTILINE);
 	private static final Pattern EMOTION_PATTERN = Pattern.compile("(?:feeling|felt|emotion|mood|happy|sad|anxious|excited|worried|calm|stressed|grateful|angry|frustrated|joyful|peaceful|overwhelmed)[\\s]*:?[\\s]*(.+?)(?:\\.|$)", Pattern.CASE_INSENSITIVE);
+	
+	// Alternative patterns for symbols that might appear anywhere in the line (not just at start)
+	private static final Pattern TASK_PATTERN_ANYWHERE = Pattern.compile("([•·\\-]|X|x|/)[\\s]+(.+)", Pattern.CASE_INSENSITIVE);
+	private static final Pattern EVENT_PATTERN_ANYWHERE = Pattern.compile("(○|O|o|◉|●|⦿)[\\s]+(.+)", Pattern.CASE_INSENSITIVE);
 
 	/**
 	 * Check if line is a task (contains •, X, /, or -)
 	 */
 	private boolean isTask(String line) {
-		return TASK_PATTERN.matcher(line).find();
+		// Try pattern matching at start of line first
+		if (TASK_PATTERN.matcher(line).find()) {
+			return true;
+		}
+		// Also check if symbol appears anywhere in the line (for vertical text or OCR issues)
+		return TASK_PATTERN_ANYWHERE.matcher(line).find();
 	}
 
 	/**
 	 * Check if line is an event (contains O, ○, ◉, ●, or ⦿)
 	 */
 	private boolean isEvent(String line) {
-		return EVENT_PATTERN.matcher(line).find();
+		// Try pattern matching at start of line first
+		if (EVENT_PATTERN.matcher(line).find()) {
+			return true;
+		}
+		// Also check if symbol appears anywhere in the line
+		return EVENT_PATTERN_ANYWHERE.matcher(line).find();
 	}
 
 	/**
@@ -137,19 +175,23 @@ public class ContentExtractionService {
 	private Task parseTask(String line, int lineNumber, String positionHash, JournalPage journalPage, User user) {
 		Matcher taskMatcher = TASK_PATTERN.matcher(line);
 		if (!taskMatcher.find()) {
-			return null;
+			// Try alternative pattern (symbol anywhere in line)
+			taskMatcher = TASK_PATTERN_ANYWHERE.matcher(line);
+			if (!taskMatcher.find()) {
+				return null;
+			}
 		}
 
 		String symbol = taskMatcher.group(1);
 		String content = taskMatcher.group(2).trim();
 		
-		if (content.isEmpty()) {
+		if (content.isEmpty() || content.length() < 2) {
 			return null;
 		}
 
 		Task.TaskStatus status;
 		// Determine status based on symbol
-		if (symbol.equals("X") || symbol.equals("x")) {
+		if (symbol.equalsIgnoreCase("X")) {
 			status = Task.TaskStatus.COMPLETED;
 		} else if (symbol.equals("/")) {
 			status = Task.TaskStatus.IN_PROGRESS;
@@ -175,13 +217,17 @@ public class ContentExtractionService {
 	private Event parseEvent(String line, int lineNumber, String positionHash, JournalPage journalPage, User user) {
 		Matcher eventMatcher = EVENT_PATTERN.matcher(line);
 		if (!eventMatcher.find()) {
-			return null;
+			// Try alternative pattern (symbol anywhere in line)
+			eventMatcher = EVENT_PATTERN_ANYWHERE.matcher(line);
+			if (!eventMatcher.find()) {
+				return null;
+			}
 		}
 
 		String symbol = eventMatcher.group(1);
 		String content = eventMatcher.group(2).trim();
 		
-		if (content.isEmpty()) {
+		if (content.isEmpty() || content.length() < 2) {
 			return null;
 		}
 

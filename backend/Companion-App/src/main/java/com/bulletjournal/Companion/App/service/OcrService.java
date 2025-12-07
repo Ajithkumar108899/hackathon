@@ -95,18 +95,16 @@ public class OcrService {
 		// Configure OCR settings for better accuracy with handwritten text
 		// Try different PSM modes for handwritten text:
 		// PSM 11 = Sparse text (good for lists)
-		// PSM 12 = Sparse text with OSD (orientation and script detection)
+		// PSM 12 = Sparse text with OSD (orientation and script detection) - BEST for vertical text
 		// PSM 6 = Uniform block (default for handwritten)
-		tesseract.setPageSegMode(11); // Sparse text - better for lists and bullet points
+		// PSM 5 = Single vertical line of text (for vertical handwriting)
+		// PSM 4 = Single column of text (for vertical lists)
+		tesseract.setPageSegMode(12); // Sparse text with OSD - detects orientation automatically
 		tesseract.setOcrEngineMode(1); // Neural nets LSTM engine only
 		
-		// Remove character whitelist - it might be too restrictive for handwritten text
-		// Let Tesseract recognize all characters naturally
-		// tesseract.setTessVariable("tessedit_char_whitelist", "..."); // Commented out
-		
-		// Additional settings for better handwritten recognition
-		tesseract.setTessVariable("tessedit_pageseg_mode", "11");
-		tesseract.setTessVariable("classify_bln_numeric_mode", "1"); // Better number recognition
+		// Note: setTessVariable() is deprecated in newer versions of Tesseract
+		// The main settings (PSM mode and engine mode) are set above
+		// Character whitelist and other advanced settings are handled by Tesseract automatically
 	}
 	
 	/**
@@ -133,23 +131,57 @@ public class OcrService {
 			// Preprocess image for better OCR results
 			BufferedImage processedImage = preprocessImage(imageFile);
 			
-			// Perform OCR
-			String extractedText = tesseract.doOCR(processedImage);
+			// Try multiple PSM modes for better results (especially for vertical text)
+			String extractedText = null;
+			int[] psmModes = {12, 11, 6, 5, 4}; // Try different modes
+			
+			for (int psmMode : psmModes) {
+				try {
+					tesseract.setPageSegMode(psmMode);
+					// Note: setTessVariable() is deprecated, using setPageSegMode() is sufficient
+					extractedText = tesseract.doOCR(processedImage);
+					
+					if (extractedText != null && !extractedText.trim().isEmpty() && extractedText.trim().length() > 1) {
+						log.info("OCR extraction completed with PSM mode {}: {} characters", psmMode, extractedText.length());
+						log.debug("Extracted text preview: {}", extractedText.substring(0, Math.min(100, extractedText.length())));
+						break; // Use this result if we got meaningful text
+					}
+				} catch (TesseractException e) {
+					log.debug("PSM mode {} failed with TesseractException, trying next mode: {}", psmMode, e.getMessage());
+				} catch (Exception e) {
+					log.debug("PSM mode {} failed, trying next mode: {}", psmMode, e.getMessage());
+				}
+			}
+			
+			// Reset to default PSM mode
+			tesseract.setPageSegMode(12);
 			
 			if (extractedText != null && !extractedText.trim().isEmpty()) {
-				log.info("OCR extraction completed. Extracted {} characters", extractedText.length());
+				log.info("OCR extraction completed. Final extracted {} characters", extractedText.length());
+				log.info("Full extracted text: '{}'", extractedText);
 				return extractedText.trim();
 			} else {
-				log.warn("OCR returned empty text");
+				log.warn("OCR returned empty or very short text. This might indicate:");
+				log.warn("  1. Image quality is too low");
+				log.warn("  2. Text is too small or unclear");
+				log.warn("  3. Tesseract OCR configuration issues");
+				log.warn("  4. Image orientation issues (vertical text)");
 				return "";
 			}
 		} catch (Error e) {
 			// Handle native library errors (Tesseract not installed)
 			log.error("Tesseract OCR is not available or not properly installed: {}", e.getMessage());
-			log.warn("Please install Tesseract OCR to enable text extraction. Application will continue without OCR.");
-			return ""; // Return empty string instead of throwing exception
-		} catch (TesseractException e) {
-			log.error("Tesseract OCR error: {}", e.getMessage());
+			log.error("Error type: {}", e.getClass().getName());
+			if (e.getCause() != null) {
+				log.error("Caused by: {}", e.getCause().getMessage());
+			}
+			log.warn("Please install Tesseract OCR to enable text extraction.");
+			log.warn("Installation instructions:");
+			log.warn("  Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki");
+			log.warn("  Or use: choco install tesseract");
+			log.warn("  Linux: sudo apt-get install tesseract-ocr");
+			log.warn("  Mac: brew install tesseract");
+			log.warn("After installation, ensure TESSDATA_PREFIX environment variable points to tessdata folder.");
 			return ""; // Return empty string instead of throwing exception
 		}
 	}
@@ -191,8 +223,8 @@ public class OcrService {
 		BufferedImage binary = applyThreshold(contrast);
 		
 		// Step 4: Resize if image is too small (minimum 300 DPI recommended for OCR)
-		int minWidth = 1500; // Increased for better handwritten text recognition
-		int minHeight = 1500;
+		int minWidth = 2000; // Increased for better handwritten text recognition
+		int minHeight = 2000;
 		
 		BufferedImage processed = binary;
 		if (binary.getWidth() < minWidth || binary.getHeight() < minHeight) {
@@ -205,7 +237,12 @@ public class OcrService {
 			int newHeight = (int) (binary.getHeight() * scale);
 			
 			processed = Scalr.resize(binary, Scalr.Method.QUALITY, newWidth, newHeight);
+			log.info("Image resized from {}x{} to {}x{} for better OCR", 
+					binary.getWidth(), binary.getHeight(), newWidth, newHeight);
 		}
+		
+		// Log image dimensions for debugging
+		log.info("Processed image dimensions: {}x{}", processed.getWidth(), processed.getHeight());
 		
 		return processed;
 	}
@@ -220,7 +257,8 @@ public class OcrService {
 		BufferedImage binary = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
 		
 		// Threshold value (adjust between 0-255, lower = more sensitive)
-		int threshold = 140; // Slightly higher for better text detection
+		// Lower threshold for better handwritten text detection
+		int threshold = 128; // Lowered from 140 for better text detection
 		
 		for (int y = 0; y < height; y++) {
 			for (int x = 0; x < width; x++) {
@@ -296,10 +334,22 @@ public class OcrService {
 	 */
 	public boolean isOcrAvailable() {
 		try {
-			// Try to get Tesseract version
-			String version = tesseract.getClass().getPackage().getImplementationVersion();
-			log.info("Tesseract OCR is available. Version: {}", version);
+			// Try to perform a simple OCR test on a blank image
+			// Create a small test image
+			BufferedImage testImage = new BufferedImage(100, 100, BufferedImage.TYPE_BYTE_BINARY);
+			java.awt.Graphics2D g = testImage.createGraphics();
+			g.setColor(java.awt.Color.WHITE);
+			g.fillRect(0, 0, 100, 100);
+			g.dispose();
+			
+			// Try to perform OCR (should not throw exception if Tesseract is available)
+			String result = tesseract.doOCR(testImage);
+			log.info("Tesseract OCR is available and working. Test OCR result length: {}", 
+					result != null ? result.length() : 0);
 			return true;
+		} catch (Error e) {
+			log.warn("Tesseract OCR is not available (native library error): {}", e.getMessage());
+			return false;
 		} catch (Exception e) {
 			log.warn("Tesseract OCR may not be properly configured: {}", e.getMessage());
 			return false;
